@@ -110,7 +110,7 @@ class DataParallel(Module):
 
     # TODO: update notes/cuda.rst when this class handles 8+ GPUs well
 
-    def __init__(self, module, device_ids=None, output_device=None, dim=0):
+    def __init__(self, module, device_ids=None, output_device=None, model_device=None, dim=0):
         super(DataParallel, self).__init__()
 
         if not torch.cuda.is_available():
@@ -122,11 +122,14 @@ class DataParallel(Module):
             device_ids = list(range(torch.cuda.device_count()))
         if output_device is None:
             output_device = device_ids[0]
+        if model_device is None:
+            model_device = device_ids[0]
 
         self.dim = dim
         self.module = module
         self.device_ids = list(map(lambda x: _get_device_index(x, True), device_ids))
         self.output_device = _get_device_index(output_device, True)
+        self.model_device = _get_device_index(model_device, True)
 
         _check_balance(self.device_ids)
 
@@ -139,7 +142,13 @@ class DataParallel(Module):
         inputs, kwargs = self.scatter(inputs, kwargs, self.device_ids)
         if len(self.device_ids) == 1:
             return self.module(*inputs[0], **kwargs[0])
-        replicas = self.replicate(self.module, self.device_ids[:len(inputs)])
+    
+        device_ids = self.device_ids[:len(inputs)]
+        if self.model_device in self.device_ids:
+            replicas = self.replicate(self.module, device_ids)
+        else:
+            device_ids.insert(0, self.model_device)
+            replicas = self.replicate(self.module, device_ids)[1:]
         outputs = self.parallel_apply(replicas, inputs, kwargs)
         return self.gather(outputs, self.output_device)
 
